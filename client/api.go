@@ -70,6 +70,7 @@ func NewLocalApi() (*Client, error) {
 *           - an IPFSResponse struct
 * 			- an error if it occured and nil otherwise
 */
+//NOTE By default the file will be pinned. Can pass the argument pin:false if we don't want to
 func (client *Client) Add(pathName string) (*IPFSResponse, error) {
 	// initalizing variable needed
 	var apiResponse *http.Response
