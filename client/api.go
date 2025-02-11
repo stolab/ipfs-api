@@ -1,6 +1,6 @@
 // Package client implement a client to the IPFS api
 //
-// This client is written based on the kubo rpc api https://docs.ipfs.tech/reference/kubo/rpc/ 
+// This client is written based on the kubo rpc api https://docs.ipfs.tech/reference/kubo/rpc/
 // This package can be used with a local instance of kubo running or with publicly accessible endpoint
 // All contribution/suggestions are welcome.
 package client
@@ -61,103 +61,123 @@ func NewLocalApi() (*Client, error) {
     return NewIPFSApi("http://127.0.0.1:5001", 4)
 }
 
-// The add function upload a new file to IPFS
-// It takes the path to the file to upload as a parameter
-// Upon successful upload it return an IPFSResponse struct and nil
-// In case of error the IPFSResponse is set to nil and an error is returned
-//NOTE By default the file will be pinned.
+// The add function upload a new file to IPFS It takes the path to the file to upload as a parameter Upon successful upload it return an IPFSResponse struct and nil In case of error the IPFSResponse is set to nil and an error is returned NOTE By default the file will be pinned.
 func (client *Client) Add(pathName string) (*IPFSResponse, error) {
-	// initalizing variable needed
-	var apiResponse *http.Response
-	multiPartBody := new(bytes.Buffer)
 
-	//Create the multipart body
-	writer := multipart.NewWriter(multiPartBody)
-	boundary, err := createMultiPartBody(pathName, writer)
-	if err != nil {
-		return nil, err
-	}
-	writer.Close()
+    var request *http.Request
 
-	// The sending part
-	req, err := http.NewRequest("POST", client.url + apiEndpoint["add"] , multiPartBody)
-	contentType := fmt.Sprintf("multipart/form-data; boundary=%s", boundary)
-	req.Header.Set("Content-Type", contentType)
-	if err != nil {
-		return nil, err
-	}
+    //do the preprocessing of the pathName given
+    fileInfo, err := os.Stat(pathName)
+    if err != nil {
+        return nil, err
+    }
+    if fileInfo.IsDir() {
+        request, err = client.createDirectoryMultiPartBody(pathName)
+        if err != nil {
+            return nil, err
+        }
+    } else {
+        file, err := os.Open(pathName)
+        defer file.Close()
+        if err != nil {
+            return nil, err
+        }
 
-	apiResponse, err = client.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
+        request, err = client.createMultiPartBody(file, pathName)
+        if err != nil {
+            return nil, err
+        }
+
+    }
+
+    apiResponse, err := client.httpClient.Do(request)
+    if err != nil {
+        return nil, err
+    }
 
     return readIPFSResponse(apiResponse), nil 
 
 }
 
-// Internal function to facilitate the creation of the multipart body 
-// it first check if the pathname provide is a directory.
-// if its a file it create the multipart body with the
-// content of the file.
-// it takes two argument, the pathname and the writer to write to
-// Upon success it return the string representing the boundary of the multipart body
-// If a failure occur return nil and the error
-func createMultiPartBody(pathName string, writer *multipart.Writer) (string, error){
-	// intializing variable
-	var err error
-	var writerBoundary string
+func (client *Client) AddBinary(content io.Reader, fileName string) (*IPFSResponse, error) {
+    req, err := client.createMultiPartBody(content, fileName)
+    if err != nil {
+        return nil, err
+    }
+    apiResponse, err := client.httpClient.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    return readIPFSResponse(apiResponse), nil
+}
 
-	fileInfo, err := os.Stat(pathName)
-	if err != nil {
-		return "", err
-	}
-	// Checking if the pathname provided is a directory
-	if fileInfo.IsDir() {
-		writerBoundary, _ = createDirectoryMultiPartBody(pathName, writer)
-	} else {
-		var formFile io.Writer
-		if formFile, err = writer.CreateFormFile("file", path.Base(pathName)); err != nil { //NOTE should just provide the name of the file here not the entire filename otherwise everything is added to IPFS
-			return writerBoundary, err
-		}
+// create an http request with everything set to send a multipart body with the 
+// content provided in the file parameter
+func (client *Client) createMultiPartBody(file io.Reader, fileName string) (*http.Request, error){
 
-		file, err := os.Open(pathName)
-		if err != nil {
-			return writerBoundary, err
-		}
-		defer file.Close()
+    //allocating the space for the multipart body
+    multipartBody := new(bytes.Buffer)
+    writer := multipart.NewWriter(multipartBody)
 
-		_, err = io.Copy(formFile, file)
-		if err != nil {
-			return writerBoundary, err
-		}
-		writerBoundary = writer.Boundary() 
-	}
-	return writerBoundary, nil
+    //should first create the part
+    formFile, err := writer.CreateFormFile("file", path.Base(fileName)) //NOTE does not works need to provide the filename
+    if err != nil {
+        return nil, err
+    }
+    // copy the data to the boundary
+    _, err = io.Copy(formFile, file)
+    if err != nil {
+        return nil, err
+    }
+	writer.Close()
+
+    //create the http request
+    req, err := http.NewRequest("POST", client.url + apiEndpoint["add"] , multipartBody)
+    if err != nil {
+        return nil, err
+    }
+    contenType := fmt.Sprintf("multipart/form-data; boundary=%s", writer.Boundary())
+    req.Header.Set("Content-Type", contenType)
+	return req, nil
 }
 
 // Used when the Pathname is a directory
 // it loops on the all the file in the directory and create a big multipart body 
-func createDirectoryMultiPartBody(pathName string, multiPartBody *multipart.Writer) (string, error){
+func (client *Client) createDirectoryMultiPartBody(path string) (*http.Request, error){
+    //allocating space for the multipart body
+    multipartBody := new(bytes.Buffer)
+    writer := multipart.NewWriter(multipartBody)
 	// read the dir
-	var writerBoundary string
-	entries, err := os.ReadDir(pathName)
+	entries, err := os.ReadDir(path)
 	if err != nil {
-		return writerBoundary, err
+		return nil, err
 	}
 
-	for index, file := range entries {
+	for _, file := range entries {
 		if file.IsDir() {
-			createDirectoryMultiPartBody(pathName + file.Name(), multiPartBody)
+           continue 
 		} else {
-			if index == 0 || writerBoundary == "" {
-				writerBoundary, _ = createMultiPartBody(pathName +"/" + file.Name(), multiPartBody)
-			} else {
-				createMultiPartBody(pathName +"/" + file.Name(), multiPartBody)
-			}
+            //create the formfile
+            formFile, err := writer.CreateFormFile("file", file.Name())
+            if err != nil {
+                return nil, err
+            }
+            //open the file
+            fileContent, err := os.Open(path + "/" + file.Name()) 
+            defer fileContent.Close()
+            if err != nil {
+                return nil, err
+            }
+            _, err = io.Copy(formFile, fileContent)
 		}
 	}
-	return writerBoundary, nil
+    req, err := http.NewRequest("POST", client.url + apiEndpoint["add"], multipartBody)
+    if err != nil {
+        return nil, err
+    }
+    contenType := fmt.Sprintf("multipart/form-data; boundary=%s", writer.Boundary())
+    req.Header.Set("Content-Type", contenType)
+	return req, nil
 }
 
 // Cat function retrieve the content of file stored in IPFS based on its CID
