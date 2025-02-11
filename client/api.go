@@ -1,6 +1,6 @@
 // Package client implement a client to the IPFS api
 //
-// This client is written based on the kubo rpc api https://docs.ipfs.tech/reference/kubo/rpc/ 
+// This client is written based on the kubo rpc api https://docs.ipfs.tech/reference/kubo/rpc/
 // This package can be used with a local instance of kubo running or with publicly accessible endpoint
 // All contribution/suggestions are welcome.
 package client
@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"time"
 )
 
@@ -119,7 +120,7 @@ func (client *Client) createMultiPartBody(file io.Reader, fileName string) (*htt
     writer := multipart.NewWriter(multipartBody)
 
     //should first create the part
-    formFile, err := writer.CreateFormFile("file", fileName) //NOTE does not works need to provide the filename
+    formFile, err := writer.CreateFormFile("file", path.Base(fileName)) //NOTE does not works need to provide the filename
     if err != nil {
         return nil, err
     }
